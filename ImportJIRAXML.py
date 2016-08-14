@@ -11,11 +11,13 @@ import re
 import time
 import json
 import argparse
-from github import Github
+import github
 import argparse
+from ansicolor import red, black
 
 parser = argparse.ArgumentParser()
 parser.add_argument("filename", help="The JIRA XML RSS export to read")
+parser.add_argument("-d", "--delay", type=int, default=10, help="How long to delay between creating issue")
 args = parser.parse_args()
 
 etree = etree.parse(args.filename)
@@ -56,8 +58,10 @@ Issue type: {5}
 JIRA status: {2}
 Links: [Preview]({3}), [Edit]({4})
 
+{6}
     """.format(item["created"], item["reporter"], item["resolution"],
-               item["preview_url"], item["edit_url"], item["issue_type"])
+               item["preview_url"], item["edit_url"], item["issue_type"], item["description"])
+
 
 def find_issue_keys(repo):
     """Generate all issue keys for correctly named GitHub issues"""
@@ -76,7 +80,7 @@ jiraItems = [itemToDict(item) for item in items]
 
 with open("credentials.json") as credentialsFile:
     credentials = json.load(credentialsFile)
-gh = Github(credentials["username"], credentials["password"])
+gh = github.Github(credentials["username"], credentials["password"])
 
 repo = gh.get_repo("ulikoehler/KADeutschIssues")
 issues = repo.get_issues()
@@ -89,11 +93,21 @@ missing_items = jiraKeys.symmetric_difference(githubKeys)
 print("Creating {0} new issues on GitHub...\n".format(len(missing_items)))
 
 # Iterate every JIRA item, skip items already on github & submit new issue for remaining ones
-cnt = 0
+todo = []
 for item in jiraItems:
-    if item["id"] not in missing_items:
-        continue
-    createGithubIssue(repo, item)
-    cnt += 1
-    print("Created issue #{0}: {1}".format(cnt, item["title"]))
-    time.sleep(10.)
+    if item["id"] in missing_items:
+        todo.append(item)
+
+# Cant use for loop because we might need to retry
+idx = 0
+while idx < len(todo):
+    item = todo[idx]
+    try:
+        createGithubIssue(repo, item)
+        print("Created issue #{0}: {1}".format(idx + 1, item["title"]))
+        time.sleep(float(args.delay))
+        idx += 1# Next item only on success
+    except github.GithubException as e:
+        print(red("GitHub error, likely rate limiting (retrying in 60s): {0}".format(e), bold=True))
+        time.sleep(60.)
+        # Retry this item

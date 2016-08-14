@@ -1,2 +1,3 @@
 pygithub
 lxml
+ansicolor
